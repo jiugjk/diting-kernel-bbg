@@ -26,7 +26,7 @@ EOF
   created=$((created + 1))
 }
 
-stub_makefile() {
+stub_makefile_empty() {
   local rel="$1"
   [[ -f "${rel}" ]] && return 0
   mkdir -p "$(dirname "${rel}")"
@@ -38,29 +38,136 @@ EOF
   created=$((created + 1))
 }
 
-# 1) Explicit known holes on diting OSS
+install_hwid_stub() {
+  # Xiaomi did not publish drivers/misc/hwid on bsp-diting-s-oss, but:
+  #  - drivers/misc/Makefile: obj-y += hwid/ and -I.../hwid
+  #  - drivers/soc/qcom/icnss2/qmi.c includes hwid.h and calls:
+  #      get_hw_country_version(), get_hw_version_platform()
+  #      HARDWARE_PROJECT_L9S, CountryGlobal
+  mkdir -p drivers/misc/hwid
+  if [[ ! -f drivers/misc/hwid/hwid.h ]]; then
+    cat > drivers/misc/hwid/hwid.h <<'EOF'
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Minimal OSS stub for unpublished Xiaomi hwid driver.
+ * Enough for icnss2 BDF filename selection to compile and take the
+ * generic path (non-L9S).
+ */
+#ifndef __XIAOMI_HWID_STUB_H__
+#define __XIAOMI_HWID_STUB_H__
+
+#include <linux/types.h>
+
+/* Country codes used by vendor WLAN BDF selection */
+enum {
+	CountryCN = 0,
+	CountryGlobal = 1,
+	CountryIndia = 2,
+};
+
+/* Project IDs — only L9S is referenced by diting icnss2 code */
+#ifndef HARDWARE_PROJECT_UNKNOWN
+#define HARDWARE_PROJECT_UNKNOWN	0
+#endif
+#ifndef HARDWARE_PROJECT_L9S
+#define HARDWARE_PROJECT_L9S		0x4C3953 /* 'L9S' tag, not matched by stub */
+#endif
+
+uint32_t get_hw_country_version(void);
+uint32_t get_hw_version_platform(void);
+uint32_t get_hw_version_major(void);
+uint32_t get_hw_version_minor(void);
+uint32_t get_hwid_value(void);
+
+#endif /* __XIAOMI_HWID_STUB_H__ */
+EOF
+    echo "  [stub-header] drivers/misc/hwid/hwid.h"
+    created=$((created + 1))
+  fi
+
+  if [[ ! -f drivers/misc/hwid/hwid.c ]]; then
+    cat > drivers/misc/hwid/hwid.c <<'EOF'
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Minimal OSS stub implementation of Xiaomi hwid helpers.
+ * Returns Global + unknown project so WLAN uses default BDF names.
+ */
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include "hwid.h"
+
+uint32_t get_hw_country_version(void)
+{
+	return (uint32_t)CountryGlobal;
+}
+EXPORT_SYMBOL_GPL(get_hw_country_version);
+
+uint32_t get_hw_version_platform(void)
+{
+	/* Not HARDWARE_PROJECT_L9S → default bdwlan.elf path in icnss2 */
+	return HARDWARE_PROJECT_UNKNOWN;
+}
+EXPORT_SYMBOL_GPL(get_hw_version_platform);
+
+uint32_t get_hw_version_major(void)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(get_hw_version_major);
+
+uint32_t get_hw_version_minor(void)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(get_hw_version_minor);
+
+uint32_t get_hwid_value(void)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(get_hwid_value);
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Xiaomi hwid OSS stub");
+EOF
+    echo "  [stub-source] drivers/misc/hwid/hwid.c"
+    created=$((created + 1))
+  fi
+
+  # Always (re)write Makefile so we actually build the stub objects.
+  # Empty stub Makefile from earlier runs would leave unresolved symbols.
+  cat > drivers/misc/hwid/Makefile <<'EOF'
+# SPDX-License-Identifier: GPL-2.0
+# OSS stub hwid driver (upstream sources not published for this branch)
+obj-y += hwid.o
+EOF
+  echo "  [stub-makefile] drivers/misc/hwid/Makefile (with hwid.o)"
+  created=$((created + 1))
+
+  stub_kconfig "drivers/misc/hwid/Kconfig"
+}
+
+# 1) hwid is special: needs real header + symbols, not empty Makefile
+install_hwid_stub
+
+# 2) other known empty holes
 for rel in \
-  drivers/misc/hwid/Kconfig \
   drivers/misc/plaid/Kconfig \
   drivers/misc/mi_gamekey/Kconfig
 do
   stub_kconfig "${rel}"
 done
 for rel in \
-  drivers/misc/hwid/Makefile \
   drivers/misc/plaid/Makefile \
   drivers/misc/mi_gamekey/Makefile
 do
-  # only stub makefile if the dir would be entered by obj-y / missing makefile
   if [[ ! -f "${rel}" ]]; then
-    stub_makefile "${rel}"
+    stub_makefile_empty "${rel}"
   fi
 done
 
-# 2) Generic: any `source "....Kconfig"` whose file is missing.
-# Use grep (always present); do NOT depend on rg.
+# 3) Generic: any `source "....Kconfig"` whose file is missing.
 while IFS= read -r line; do
-  # line example: source "drivers/misc/plaid/Kconfig"
   rel="${line#*\"}"
   rel="${rel%%\"*}"
   [[ "${rel}" == *Kconfig* ]] || continue
@@ -69,15 +176,15 @@ while IFS= read -r line; do
 done < <(grep -R --include='Kconfig*' -h -E '^\s*source\s+"[^"]+Kconfig[^"]*"' \
   drivers arch fs net sound security 2>/dev/null || true)
 
-# 3) Generic: drivers/misc obj-y += foo/ without Makefile
+# 4) Generic: drivers/misc obj-y += foo/ without Makefile (except hwid handled above)
 if [[ -f drivers/misc/Makefile ]]; then
   while IFS= read -r sub; do
     [[ -n "${sub}" ]] || continue
+    [[ "${sub}" == "hwid" ]] && continue
     if [[ ! -f "drivers/misc/${sub}/Makefile" ]]; then
-      stub_makefile "drivers/misc/${sub}/Makefile"
+      stub_makefile_empty "drivers/misc/${sub}/Makefile"
     fi
     if [[ ! -f "drivers/misc/${sub}/Kconfig" ]]; then
-      # parent may source it; ensure exists
       stub_kconfig "drivers/misc/${sub}/Kconfig"
     fi
   done < <(grep -E 'obj-(y|\$\(CONFIG_[A-Z0-9_]*\))' drivers/misc/Makefile \
@@ -102,3 +209,10 @@ if [[ -f drivers/misc/Kconfig ]]; then
   fi
   echo "[+] drivers/misc/Kconfig sources all resolvable"
 fi
+
+# sanity: hwid symbols present
+if [[ ! -f drivers/misc/hwid/hwid.h || ! -f drivers/misc/hwid/hwid.c ]]; then
+  echo "[ERROR] hwid stub incomplete" >&2
+  exit 1
+fi
+echo "[+] hwid stub ready (hwid.h + hwid.c)"

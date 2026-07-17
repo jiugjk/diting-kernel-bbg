@@ -89,9 +89,12 @@ jobs:
       - name: Build kernel with Baseband-guard
         run: |
           set -eux
+          mkdir -p work
           export JOBS="$(nproc)"
           export WORK_DIR VARIANT BBG_REF KERNEL_BRANCH KERNEL_REPO
           export LOCALVERSION_OVERRIDE KBUILD_BUILD_USER KBUILD_BUILD_HOST
+          # pipefail so compiler failures are not masked by tee
+          set -o pipefail
           ./scripts/build-kernel.sh 2>&1 | tee work/build.log
 
       - name: Verify artifacts
