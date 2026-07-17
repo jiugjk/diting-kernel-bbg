@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Integrate in-tree panda-hide into a kernel source tree (idempotent).
+# Integrate in-tree panda-hide + apply zero-kprobe static patches.
 # Usage: integrate-panda-hide.sh <kernel_src>
 set -euo pipefail
 
@@ -12,33 +12,32 @@ if [[ -z "${KERNEL_SRC}" || ! -d "${KERNEL_SRC}" ]]; then
   echo "Usage: $0 <kernel_src>" >&2
   exit 2
 fi
-if [[ ! -d "${SRC_DIR}" ]]; then
-  echo "[ERROR] missing ${SRC_DIR}" >&2
-  exit 1
-fi
-
 KERNEL_SRC="$(cd "${KERNEL_SRC}" && pwd)"
 cd "${KERNEL_SRC}"
 
-if [[ ! -d security || ! -f security/Makefile || ! -f security/Kconfig ]]; then
+[[ -d security && -f security/Makefile && -f security/Kconfig ]] || {
   echo "[ERROR] not a kernel tree with security/" >&2
   exit 1
-fi
+}
 
 DEST="${KERNEL_SRC}/security/panda-hide"
-echo "[+] Installing panda-hide sources -> ${DEST}"
+echo "[+] Installing panda-hide -> ${DEST}"
 rm -rf "${DEST}"
 mkdir -p "${DEST}"
-# Copy only build inputs (not HOOK_MAP.md required for build, but keep it)
+# copy C sources / Kbuild (not the nested include tree as-is)
 cp -a "${SRC_DIR}/." "${DEST}/"
+rm -rf "${DEST}/include" 2>/dev/null || true
 
-# Makefile entry
+# Install public header
+mkdir -p "${KERNEL_SRC}/include/linux"
+cp -f "${SRC_DIR}/include/linux/panda_hide.h" "${KERNEL_SRC}/include/linux/panda_hide.h"
+echo "[+] installed include/linux/panda_hide.h"
+
+# Makefile / Kconfig wiring
 if ! grep -q 'panda-hide' security/Makefile; then
   printf '\nobj-$(CONFIG_PANDA_HIDE) += panda-hide/\n' >> security/Makefile
   echo "[+] security/Makefile updated"
 fi
-
-# Kconfig source (before last endmenu)
 if ! grep -q 'security/panda-hide/Kconfig' security/Kconfig; then
   if grep -q '^endmenu[[:space:]]*$' security/Kconfig; then
     awk '
@@ -58,17 +57,18 @@ if ! grep -q 'security/panda-hide/Kconfig' security/Kconfig; then
   echo "[+] security/Kconfig updated"
 fi
 
-# Ensure KPROBES is available for this feature — do not force-enable here if
-# platform disables it; fragment will request it and olddefconfig resolves.
+# Zero-kprobe static call-site patches
+echo "[+] Applying static patches (array.c / task_mmu.c / ...)"
+python3 "${SCRIPT_DIR}/apply-panda-static.py" "${KERNEL_SRC}"
 
 mkdir -p "${KERNEL_SRC}/.panda-hide-integration"
 {
-  echo "source_dir=${SRC_DIR}"
-  echo "dest_dir=security/panda-hide"
+  echo "mode=static+lsm"
   echo "upstream=https://github.com/P4nda0s/kpm-panda-hide"
-  echo "port=in-tree kprobe+LSM (no KernelPatch)"
+  echo "header=include/linux/panda_hide.h"
+  echo "dir=security/panda-hide"
+  echo "patched=fs/proc/array.c,fs/proc/base.c,fs/proc/task_mmu.c,fs/exec.c,fs/open.c,mm/memory.c"
   echo "integrated_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "${KERNEL_SRC}/.panda-hide-integration/info.txt"
 
-echo "[+] panda-hide integrated"
-echo "    Remember CONFIG_PANDA_HIDE=y and CONFIG_LSM includes panda_hide"
+echo "[+] panda-hide static integration complete"

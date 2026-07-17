@@ -1,0 +1,29 @@
+--- kref/mm/memory.c	2026-07-17 08:21:52.954836631 +0800
++++ kref-test/mm/memory.c	2026-07-17 08:23:46.375783461 +0800
+@@ -78,6 +78,7 @@
+ #include <trace/events/kmem.h>
+ 
+ #include <asm/io.h>
++#include <linux/panda_hide.h>
+ #include <asm/mmu_context.h>
+ #include <asm/pgalloc.h>
+ #include <linux/uaccess.h>
+@@ -5573,7 +5574,18 @@
+ int access_remote_vm(struct mm_struct *mm, unsigned long addr,
+ 		void *buf, int len, unsigned int gup_flags)
+ {
++	/* PANDA_HIDE_STATIC_BEGIN */
++#ifdef CONFIG_PANDA_HIDE
++	{
++		int ph_ret = __access_remote_vm(NULL, mm, addr, buf, len, gup_flags);
++		if (!(gup_flags & FOLL_WRITE) && buf && len > 0)
++			panda_hide_scrub_mem(buf, len);
++		return ph_ret;
++	}
++#else
+ 	return __access_remote_vm(NULL, mm, addr, buf, len, gup_flags);
++#endif
++	/* PANDA_HIDE_STATIC_END */
+ }
+ 
+ /*

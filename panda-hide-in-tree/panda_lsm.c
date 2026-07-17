@@ -1,27 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * LSM hooks — port of openat_hide.c + net_hide.c (native, no KernelPatch)
- *
- * file_open        ~ openat path deny (-ENOENT)
- * socket_connect   ~ connect() frida port deny (-ECONNREFUSED), allow adbd
+ * LSM: socket_connect only for static mode (path hide is in fs/open.c).
+ * file_open kept as defense-in-depth.
  */
-#include "panda_common.h"
-#include <linux/path.h>
-#include <linux/cred.h>
+#include <linux/kernel.h>
+#include <linux/slab.h>
+#include <linux/string.h>
+#include <linux/lsm_hooks.h>
+#include <linux/security.h>
+#include <linux/fs.h>
+#include <linux/dcache.h>
+#include <linux/net.h>
+#include <linux/in.h>
+#include <linux/socket.h>
+#include <linux/sched.h>
+#include <linux/panda_hide.h>
+
+#define PH_TAG "panda-hide: "
 
 static int panda_file_open(struct file *file)
 {
 	char *buf, *p;
 
-	if (!panda_hide_path || !file)
+	if (!file)
 		return 0;
-
 	buf = kmalloc(PATH_MAX, GFP_KERNEL);
 	if (!buf)
 		return 0;
-
 	p = d_path(&file->f_path, buf, PATH_MAX);
-	if (!IS_ERR(p) && panda_is_hidden_path(p)) {
+	if (!IS_ERR(p) && panda_hide_path_match(p)) {
 		pr_info(PH_TAG "open BLOCKED: %s\n", p);
 		kfree(buf);
 		return -ENOENT;
@@ -36,15 +43,13 @@ static int panda_socket_connect(struct socket *sock, struct sockaddr *address,
 	struct sockaddr_in *in;
 	char comm[TASK_COMM_LEN];
 
-	if (!panda_hide_net || !address)
-		return 0;
-	if (address->sa_family != AF_INET)
+	if (!address || address->sa_family != AF_INET)
 		return 0;
 	if (addrlen < (int)sizeof(struct sockaddr_in))
 		return 0;
 
 	in = (struct sockaddr_in *)address;
-	if (!panda_is_frida_port(in->sin_port))
+	if (!panda_hide_is_frida_port_be16(in->sin_port))
 		return 0;
 
 	get_task_comm(comm, current);
@@ -64,7 +69,7 @@ static struct security_hook_list panda_hooks[] __lsm_ro_after_init = {
 static int __init panda_lsm_init(void)
 {
 	security_add_hooks(panda_hooks, ARRAY_SIZE(panda_hooks), "panda_hide");
-	pr_info(PH_TAG "LSM hooks registered (file_open + socket_connect)\n");
+	pr_info(PH_TAG "LSM registered (static-mode companion)\n");
 	return 0;
 }
 

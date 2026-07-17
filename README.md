@@ -14,23 +14,24 @@
 | 组件 | 集成方式 | 说明 |
 |------|----------|------|
 | **Baseband-guard** | **树内 LSM** | 官方 `setup.sh` → `security/baseband-guard`，`CONFIG_BBG=y` |
-| **panda-hide** | **树内 kprobe+LSM 移植** | 源码在 `panda-hide-in-tree/`，集成到 `security/panda-hide/`（**不再依赖 KernelPatch**） |
-| **panda-hide.kpm**（可选） | 独立 KPM job | 仅当你仍要在 APatch/KernelPatch 上热加载时使用 |
+| **panda-hide** | **零 kprobe 静态补丁（默认）** | 直接改 `fs/proc/array.c` / `task_mmu.c` 等 + policy/LSM |
+| **panda-hide kprobe** | 可选 `CONFIG_PANDA_HIDE_KPROBES` | 运行时 hook 回退 |
+| **panda-hide.kpm** | 可选 GHA job | 仅 APatch/KernelPatch 热加载 |
 
-### panda-hide 树内移植（核心）
+### panda-hide 静态融合（默认）
 
-上游 KPM 不能直接编进 `vmlinux`。本仓库按符号一一对应移植：
+| 上游语义 | 静态落点 |
+|----------|----------|
+| TracerPid / tracing stop / stat `t` | `fs/proc/array.c` |
+| wchan `ptrace_stop` | `fs/proc/base.c` |
+| maps 过滤 | `fs/proc/task_mmu.c` `show_map()` |
+| 线程名 | `fs/exec.c` `__get_task_comm` |
+| openat/faccessat | `fs/open.c` |
+| mem 擦除 | `mm/memory.c` `access_remote_vm` |
+| connect 端口 | LSM `socket_connect`（仍是原生 LSM，无 kprobe） |
 
-| 上游 hook | 树内机制 |
-|-----------|----------|
-| `seq_put_decimal_ull` / `seq_puts` | kprobe pre |
-| `proc_pid_wchan` / `do_task_stat` | kretprobe |
-| `show_map_vma` / `__get_task_comm` | kretprobe |
-| `access_remote_vm` | kretprobe |
-| `openat` / `faccessat` | kprobe 早退 `-ENOENT` + LSM `file_open` |
-| `connect` | LSM `socket_connect` |
-
-详情：`docs/PANDA_HIDE_INTREE.md`、`panda-hide-in-tree/HOOK_MAP.md`
+可审查 diff：`patches/static/*.diff`  
+详情：`docs/PANDA_HIDE_STATIC.md`、`panda-hide-in-tree/HOOK_MAP.md`
 
 ---
 

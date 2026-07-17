@@ -59,7 +59,7 @@ fi
 CFG="${DIST_DIR}/config/final.config"
 if [[ -f "${CFG}" ]]; then
   check "CONFIG_PANDA_HIDE=y" grep -q '^CONFIG_PANDA_HIDE=y$' "${CFG}"
-  check "CONFIG_KPROBES=y" grep -q '^CONFIG_KPROBES=y$' "${CFG}"
+  check "CONFIG_PANDA_HIDE_STATIC=y" grep -q '^CONFIG_PANDA_HIDE_STATIC=y$' "${CFG}"
   check "CONFIG_LSM contains panda_hide" grep -qE '^CONFIG_LSM=.*panda_hide' "${CFG}"
   check "CONFIG_BBG=y" grep -q '^CONFIG_BBG=y$' "${CFG}"
   check "CONFIG_BBG_BLOCK_BOOT=y" grep -q '^CONFIG_BBG_BLOCK_BOOT=y$' "${CFG}"
@@ -67,7 +67,7 @@ if [[ -f "${CFG}" ]]; then
   check "CONFIG_LSM contains baseband_guard" grep -qE '^CONFIG_LSM=.*baseband_guard' "${CFG}"
   check "CONFIG_SECURITY=y" grep -q '^CONFIG_SECURITY=y$' "${CFG}"
   echo "---- security-related config ----"
-  grep -E 'CONFIG_BBG|CONFIG_PANDA_HIDE|CONFIG_KPROBES|CONFIG_LSM|CONFIG_SECURITY=' "${CFG}" || true
+  grep -E 'CONFIG_BBG|CONFIG_PANDA_HIDE|CONFIG_LSM|CONFIG_SECURITY=' "${CFG}" || true
 else
   check "final.config present" false
 fi

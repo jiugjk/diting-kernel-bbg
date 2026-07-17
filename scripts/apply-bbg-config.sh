@@ -63,18 +63,18 @@ for opt in CONFIG_BBG CONFIG_BBG_BLOCK_BOOT CONFIG_BBG_BLOCK_RECOVERY; do
   echo "${opt}=y" >> "${CFG}"
 done
 
-# Force panda-hide + deps
-for opt in CONFIG_SECURITY CONFIG_KPROBES CONFIG_KALLSYMS CONFIG_PANDA_HIDE; do
+# Force panda-hide (static mode; kprobes optional)
+for opt in CONFIG_SECURITY CONFIG_PANDA_HIDE CONFIG_PANDA_HIDE_STATIC; do
   sed -i "/^${opt}=/d;/^# ${opt} is not set/d" "${CFG}"
   echo "${opt}=y" >> "${CFG}"
 done
-# KALLSYMS_ALL is nice-to-have
-if ! grep -q '^CONFIG_KALLSYMS_ALL=y$' "${CFG}"; then
-  sed -i '/^# CONFIG_KALLSYMS_ALL is not set/d;/^CONFIG_KALLSYMS_ALL=/d' "${CFG}"
-  echo "CONFIG_KALLSYMS_ALL=y" >> "${CFG}"
+# Explicitly disable kprobe backend unless user forced it
+if ! grep -q '^CONFIG_PANDA_HIDE_KPROBES=y$' "${CFG}"; then
+  sed -i '/^CONFIG_PANDA_HIDE_KPROBES=/d;/^# CONFIG_PANDA_HIDE_KPROBES is not set/d' "${CFG}"
+  echo "# CONFIG_PANDA_HIDE_KPROBES is not set" >> "${CFG}"
 fi
 
 echo "[+] Security config applied"
 echo "    CONFIG_BBG=y BLOCK_BOOT=y BLOCK_RECOVERY=y"
-echo "    CONFIG_PANDA_HIDE=y CONFIG_KPROBES=y"
+echo "    CONFIG_PANDA_HIDE=y STATIC=y (kprobes off by default)"
 echo "    CONFIG_LSM=\"${current_lsm}\""

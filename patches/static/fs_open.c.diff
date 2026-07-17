@@ -1,0 +1,45 @@
+--- kref/fs/open.c	2026-07-17 08:21:53.654842475 +0800
++++ kref-test/fs/open.c	2026-07-17 08:23:46.375783461 +0800
+@@ -35,6 +35,7 @@
+ 
+ #include "internal.h"
+ #include <trace/hooks/syscall_check.h>
++#include <linux/panda_hide.h>
+ 
+ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+ 	struct file *filp)
+@@ -403,6 +404,18 @@
+ 	unsigned int lookup_flags = LOOKUP_FOLLOW;
+ 	const struct cred *old_cred = NULL;
+ 
++	/* PANDA_HIDE_STATIC_BEGIN */
++#ifdef CONFIG_PANDA_HIDE
++	{
++		char ph_buf[256];
++		long ph_n = strncpy_from_user(ph_buf, filename, sizeof(ph_buf));
++		if (ph_n > 0 && ph_n < (long)sizeof(ph_buf) &&
++		    panda_hide_path_match(ph_buf))
++			return -ENOENT;
++	}
++#endif
++	/* PANDA_HIDE_STATIC_END */
++
+ 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
+ 		return -EINVAL;
+ 
+@@ -1206,6 +1219,15 @@
+ 	if (IS_ERR(tmp))
+ 		return PTR_ERR(tmp);
+ 
++	/* PANDA_HIDE_STATIC_BEGIN */
++#ifdef CONFIG_PANDA_HIDE
++	if (tmp->name && panda_hide_path_match(tmp->name)) {
++		putname(tmp);
++		return -ENOENT;
++	}
++#endif
++	/* PANDA_HIDE_STATIC_END */
++
+ 	fd = get_unused_fd_flags(how->flags);
+ 	if (fd >= 0) {
+ 		struct file *f = do_filp_open(dfd, tmp, &op);

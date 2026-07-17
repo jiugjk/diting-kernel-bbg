@@ -1,0 +1,22 @@
+--- kref/fs/exec.c	2026-07-17 08:21:52.630833927 +0800
++++ kref-test/fs/exec.c	2026-07-17 08:23:46.371783428 +0800
+@@ -73,6 +73,7 @@
+ #include "internal.h"
+ 
+ #include <trace/events/sched.h>
++#include <linux/panda_hide.h>
+ 
+ EXPORT_TRACEPOINT_SYMBOL_GPL(task_rename);
+ 
+@@ -1213,6 +1214,11 @@
+ 	task_lock(tsk);
+ 	strncpy(buf, tsk->comm, buf_size);
+ 	task_unlock(tsk);
++	/* PANDA_HIDE_STATIC_BEGIN */
++#ifdef CONFIG_PANDA_HIDE
++	panda_hide_sanitize_comm(buf, buf_size);
++#endif
++	/* PANDA_HIDE_STATIC_END */
+ 	return buf;
+ }
+ EXPORT_SYMBOL_GPL(__get_task_comm);
