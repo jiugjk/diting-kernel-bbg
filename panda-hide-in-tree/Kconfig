@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-2.0
+menu "Panda Hide (frida/debugger hiding)"
+
+config PANDA_HIDE
+	bool "Enable panda-hide (in-tree port of kpm-panda-hide)"
+	depends on SECURITY
+	depends on KPROBES
+	depends on KALLSYMS
+	depends on NET
+	default y
+	help
+	  In-tree port of https://github.com/P4nda0s/kpm-panda-hide
+
+	  Original project is a KernelPatch KPM module. This option builds an
+	  equivalent built-in implementation using:
+	    - kprobe/kretprobe for /proc and memory scrubbing hooks
+	    - LSM hooks for path open and socket connect filtering
+
+	  Features:
+	    - Hide TracerPid / tracing-stop / ptrace_stop / task state 't'
+	    - Hide frida-related /proc/pid/maps entries and thread names
+	    - Return -ENOENT for frida agent/gadget paths
+	    - Refuse connect() to common frida ports (except adbd)
+	    - Scrub frida signatures from access_remote_vm read buffers
+
+	  If unsure, say Y for security-research / reverse-engineering builds.
+
+config PANDA_HIDE_LSM_ORDER
+	bool "Append panda_hide to default CONFIG_LSM string at build time"
+	depends on PANDA_HIDE
+	default y
+	help
+	  When enabled, the integration script appends ",panda_hide" to
+	  CONFIG_LSM. Required for LSM path/net hooks to load.
+
+endmenu

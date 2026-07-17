@@ -1,0 +1,8 @@
+# panda-hide + dependencies (do not edit vendor defconfigs in-place)
+CONFIG_KPROBES=y
+CONFIG_HAVE_KPROBES=y
+CONFIG_KALLSYMS=y
+CONFIG_KALLSYMS_ALL=y
+CONFIG_SECURITY=y
+CONFIG_PANDA_HIDE=y
+# CONFIG_PANDA_HIDE_LSM_ORDER is informational for menus; LSM string set by script

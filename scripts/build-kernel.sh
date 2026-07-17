@@ -22,7 +22,7 @@ BBG_REF="${BBG_REF:-main}"
 JOBS="${JOBS:-$(nproc)}"
 SKIP_CLONE="${SKIP_CLONE:-0}"
 SKIP_TOOLCHAIN="${SKIP_TOOLCHAIN:-0}"
-LOCALVERSION_OVERRIDE="${LOCALVERSION_OVERRIDE:--android12-9-bbg}"
+LOCALVERSION_OVERRIDE="${LOCALVERSION_OVERRIDE:--android12-9-bbg-phide}"
 # Match stock fingerprint style if user wants; default keeps OSS identity + bbg tag.
 KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-bbg-ci}"
 KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-github-actions}"
@@ -142,7 +142,8 @@ prepare_defconfig() {
   fi
 
   # Apply BBG fragment + LSM
-  bash "${SCRIPT_DIR}/apply-bbg-config.sh" "${KERNEL_SRC}" "${OUT_DIR}" "${REPO_ROOT}/config/bbg.fragment"
+  # Apply BBG + panda-hide fragments + LSM
+  bash "${SCRIPT_DIR}/apply-bbg-config.sh" "${KERNEL_SRC}" "${OUT_DIR}"
 
   # Localversion
   if [[ -n "${LOCALVERSION_OVERRIDE}" ]]; then
@@ -260,6 +261,7 @@ need_cmd ld.lld
 
 clone_kernel
 bash "${SCRIPT_DIR}/integrate-bbg.sh" "${KERNEL_SRC}" "${BBG_REF}"
+bash "${SCRIPT_DIR}/integrate-panda-hide.sh" "${KERNEL_SRC}"
 prepare_defconfig
 build_all
 package_dist
