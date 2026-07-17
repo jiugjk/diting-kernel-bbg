@@ -92,11 +92,15 @@ clone_kernel() {
 prepare_defconfig() {
   log "Preparing defconfig (variant=${VARIANT})"
   mkdir -p "${OUT_DIR}"
+  # Android/arm64 + LLVM: must pass CLANG_TRIPLE so clang emits aarch64, not host x86.
   local make_common=(
     make -C "${KERNEL_SRC}" O="${OUT_DIR}"
     ARCH=arm64
     LLVM=1
     LLVM_IAS=1
+    CLANG_TRIPLE=aarch64-linux-gnu-
+    CROSS_COMPILE=aarch64-linux-gnu-
+    CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
     CC=clang
     LD=ld.lld
     AR=llvm-ar
@@ -160,6 +164,9 @@ build_all() {
     ARCH=arm64
     LLVM=1
     LLVM_IAS=1
+    CLANG_TRIPLE=aarch64-linux-gnu-
+    CROSS_COMPILE=aarch64-linux-gnu-
+    CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
     CC=clang
     LD=ld.lld
     AR=llvm-ar
@@ -201,7 +208,11 @@ package_dist() {
   rm -rf "${mod_stage}"
   mkdir -p "${mod_stage}"
   make -C "${KERNEL_SRC}" O="${OUT_DIR}" \
-    ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld \
+    ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+    CLANG_TRIPLE=aarch64-linux-gnu- \
+    CROSS_COMPILE=aarch64-linux-gnu- \
+    CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+    CC=clang LD=ld.lld \
     INSTALL_MOD_PATH="${mod_stage}" modules_install
   if [[ -d "${mod_stage}/lib/modules" ]]; then
     tar -C "${mod_stage}" -I 'gzip -9' -cf "${DIST_DIR}/modules/modules.tar.gz" lib/modules
