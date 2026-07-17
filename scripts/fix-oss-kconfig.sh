@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Fix incomplete Xiaomi OSS trees:
-#  1) stub missing Kconfig files referenced by source "..."
-#  2) stub missing subdir Makefile for obj-y += hwid/ style holes
+# Fix incomplete Xiaomi OSS trees for kconfig + build.
 # Usage: fix-oss-kconfig.sh <kernel_src>
 set -euo pipefail
 
@@ -18,62 +16,89 @@ created=0
 
 stub_kconfig() {
   local rel="$1"
-  local note="${2:-Missing from Xiaomi OSS export}"
-  if [[ -f "${rel}" ]]; then
-    return 0
-  fi
+  [[ -f "${rel}" ]] && return 0
   mkdir -p "$(dirname "${rel}")"
   cat > "${rel}" <<EOF
 # SPDX-License-Identifier: GPL-2.0
-# Auto-stub by fix-oss-kconfig.sh — ${note}
-# Empty on purpose so parent Kconfig can source this path.
+# Auto-stub by fix-oss-kconfig.sh for missing OSS path: ${rel}
 EOF
   echo "  [stub-kconfig] ${rel}"
-  created=$((created+1))
+  created=$((created + 1))
 }
 
 stub_makefile() {
   local rel="$1"
-  if [[ -f "${rel}" ]]; then
-    return 0
-  fi
+  [[ -f "${rel}" ]] && return 0
   mkdir -p "$(dirname "${rel}")"
   cat > "${rel}" <<'EOF'
 # SPDX-License-Identifier: GPL-2.0
-# Auto-stub by fix-oss-kconfig.sh — directory not published in OSS.
-# Produce no objects.
+# Auto-stub — directory incomplete in Xiaomi OSS; produce no objects.
 EOF
   echo "  [stub-makefile] ${rel}"
-  created=$((created+1))
+  created=$((created + 1))
 }
 
-# --- Known Xiaomi diting OSS holes ---
-if [[ ! -d drivers/misc/hwid ]] || [[ ! -f drivers/misc/hwid/Kconfig ]]; then
-  stub_kconfig "drivers/misc/hwid/Kconfig" "drivers/misc/hwid unpublished"
-  stub_makefile "drivers/misc/hwid/Makefile"
-fi
+# 1) Explicit known holes on diting OSS
+for rel in \
+  drivers/misc/hwid/Kconfig \
+  drivers/misc/plaid/Kconfig \
+  drivers/misc/mi_gamekey/Kconfig
+do
+  stub_kconfig "${rel}"
+done
+for rel in \
+  drivers/misc/hwid/Makefile \
+  drivers/misc/plaid/Makefile \
+  drivers/misc/mi_gamekey/Makefile
+do
+  # only stub makefile if the dir would be entered by obj-y / missing makefile
+  if [[ ! -f "${rel}" ]]; then
+    stub_makefile "${rel}"
+  fi
+done
 
-# Generic: missing sourced Kconfig files
-if command -v rg >/dev/null 2>&1; then
-  while IFS= read -r rel; do
-    [[ -n "${rel}" ]] || continue
-    [[ -f "${rel}" ]] && continue
-    stub_kconfig "${rel}" "referenced by source but missing"
-  done < <(rg -N --no-filename -o 'source\s+"[^"]+Kconfig[^"]*"' \
-    drivers arch fs net sound security 2>/dev/null \
-    | sed 's/.*"\([^"]*\)"/\1/' | sort -u || true)
-fi
+# 2) Generic: any `source "....Kconfig"` whose file is missing.
+# Use grep (always present); do NOT depend on rg.
+while IFS= read -r line; do
+  # line example: source "drivers/misc/plaid/Kconfig"
+  rel="${line#*\"}"
+  rel="${rel%%\"*}"
+  [[ "${rel}" == *Kconfig* ]] || continue
+  [[ -f "${rel}" ]] && continue
+  stub_kconfig "${rel}"
+done < <(grep -R --include='Kconfig*' -h -E '^\s*source\s+"[^"]+Kconfig[^"]*"' \
+  drivers arch fs net sound security 2>/dev/null || true)
 
-# Generic: parent Makefile has obj-y += foo/ but foo/Makefile missing
-# (only for drivers/misc for safety — avoid broad tree mutation)
+# 3) Generic: drivers/misc obj-y += foo/ without Makefile
 if [[ -f drivers/misc/Makefile ]]; then
   while IFS= read -r sub; do
     [[ -n "${sub}" ]] || continue
     if [[ ! -f "drivers/misc/${sub}/Makefile" ]]; then
       stub_makefile "drivers/misc/${sub}/Makefile"
-      # if no Kconfig and parent sources it, already handled; else ensure empty dir ok
     fi
-  done < <(sed -n 's/.*obj-\$(CONFIG_[A-Z0-9_]*).*+=[[:space:]]*\([a-zA-Z0-9_-]*\)\/.*/\1/p; s/.*obj-y[[:space:]]*+=[[:space:]]*\([a-zA-Z0-9_-]*\)\/.*/\1/p' drivers/misc/Makefile | sort -u)
+    if [[ ! -f "drivers/misc/${sub}/Kconfig" ]]; then
+      # parent may source it; ensure exists
+      stub_kconfig "drivers/misc/${sub}/Kconfig"
+    fi
+  done < <(grep -E 'obj-(y|\$\(CONFIG_[A-Z0-9_]*\))' drivers/misc/Makefile \
+    | grep -oE '[A-Za-z0-9_-]+/' | tr -d '/' | sort -u)
 fi
 
 echo "[+] OSS fixups created: ${created}"
+
+# sanity: every source in drivers/misc/Kconfig must now resolve
+if [[ -f drivers/misc/Kconfig ]]; then
+  miss=0
+  while IFS= read -r line; do
+    rel="${line#*\"}"; rel="${rel%%\"*}"
+    if [[ ! -f "${rel}" ]]; then
+      echo "  [ERROR] still missing: ${rel}"
+      miss=$((miss + 1))
+    fi
+  done < <(grep -E '^\s*source\s+"' drivers/misc/Kconfig || true)
+  if [[ "${miss}" -gt 0 ]]; then
+    echo "[ERROR] ${miss} Kconfig source(s) still missing" >&2
+    exit 1
+  fi
+  echo "[+] drivers/misc/Kconfig sources all resolvable"
+fi
