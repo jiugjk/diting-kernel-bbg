@@ -260,6 +260,8 @@ need_cmd clang
 need_cmd ld.lld
 
 clone_kernel
+# Xiaomi OSS often references unpublished Kconfig (e.g. drivers/misc/hwid)
+bash "${SCRIPT_DIR}/fix-oss-kconfig.sh" "${KERNEL_SRC}"
 bash "${SCRIPT_DIR}/integrate-bbg.sh" "${KERNEL_SRC}" "${BBG_REF}"
 bash "${SCRIPT_DIR}/integrate-panda-hide.sh" "${KERNEL_SRC}"
 prepare_defconfig
