@@ -197,6 +197,69 @@ PY
   created=$((created + 1))
 }
 
+
+install_missing_vendor_hooks() {
+  # Scan for #include <trace/hooks/foo.h> and create empty vendor-hook
+  # headers when Xiaomi OSS omitted them (e.g. thermal.h).
+  mkdir -p include/trace/hooks
+  local includes
+  includes=$(grep -Rho --include='*.c' --include='*.h' \
+    '#include[[:space:]]*<trace/hooks/[a-zA-Z0-9_]*\.h>' . 2>/dev/null \
+    | sed -E 's/.*<trace\/hooks\/([a-zA-Z0-9_]+)\.h>.*/\1/' | sort -u || true)
+
+  # Always ensure known missing ones
+  includes=$(printf '%s\n%s\n' "$includes" "thermal" | sort -u)
+
+  local name hdr guard
+  for name in $includes; do
+    hdr="include/trace/hooks/${name}.h"
+    [[ -f "${hdr}" ]] && continue
+    guard="_TRACE_HOOK_$(echo "$name" | tr 'a-z' 'A-Z')_H"
+    # Minimal no-op vendor hook header matching Android DECLARE_HOOK style.
+    # Provide thermal hook used by thermal_core.c; others empty but valid.
+    if [[ "${name}" == "thermal" ]]; then
+      cat > "${hdr}" <<'EOF'
+/* SPDX-License-Identifier: GPL-2.0 */
+#undef TRACE_SYSTEM
+#define TRACE_SYSTEM thermal
+#define TRACE_INCLUDE_PATH trace/hooks
+#if !defined(_TRACE_HOOK_THERMAL_H) || defined(TRACE_HEADER_MULTI_READ)
+#define _TRACE_HOOK_THERMAL_H
+#include <linux/tracepoint.h>
+#include <trace/hooks/vendor_hooks.h>
+/*
+ * OSS stub: upstream Xiaomi tree references this header but did not publish it.
+ * Provide the hook used by drivers/thermal/thermal_core.c as a no-op site.
+ */
+struct thermal_zone_device;
+DECLARE_HOOK(android_vh_thermal_pm_notify_suspend,
+	TP_PROTO(struct thermal_zone_device *tz, int *irq_wakeable),
+	TP_ARGS(tz, irq_wakeable));
+#endif /* _TRACE_HOOK_THERMAL_H */
+/* This part must be outside protection */
+#include <trace/define_trace.h>
+EOF
+    else
+      cat > "${hdr}" <<EOF
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Auto-stub missing vendor hook header: ${name}.h */
+#undef TRACE_SYSTEM
+#define TRACE_SYSTEM ${name}
+#define TRACE_INCLUDE_PATH trace/hooks
+#if !defined(${guard}) || defined(TRACE_HEADER_MULTI_READ)
+#define ${guard}
+#include <linux/tracepoint.h>
+#include <trace/hooks/vendor_hooks.h>
+#endif /* ${guard} */
+#include <trace/define_trace.h>
+EOF
+    fi
+    echo "  [stub-vhook] ${hdr}"
+    created=$((created + 1))
+  done
+}
+
+
 # --- run fixups ---
 install_hwid_stub
 fix_usb_gadget_async_dup
@@ -256,5 +319,7 @@ if [[ -f drivers/misc/Kconfig ]]; then
   fi
   echo "[+] drivers/misc/Kconfig sources all resolvable"
 fi
+
+install_missing_vendor_hooks
 
 echo "[+] hwid stub ready; usb gadget dup fix applied if needed"
