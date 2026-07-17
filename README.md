@@ -13,11 +13,24 @@
 
 | 组件 | 集成方式 | 说明 |
 |------|----------|------|
-| **Baseband-guard** | **树内 LSM** | 通过官方 `setup.sh` 挂到 `security/baseband-guard`，`CONFIG_BBG=y` |
-| **kpm-panda-hide** | **独立 KPM** | 官方是 KernelPatch 模块，**不是**内核树内模块；Actions 可选额外编译 `panda-hide.kpm` |
+| **Baseband-guard** | **树内 LSM** | 官方 `setup.sh` → `security/baseband-guard`，`CONFIG_BBG=y` |
+| **panda-hide** | **树内 kprobe+LSM 移植** | 源码在 `panda-hide-in-tree/`，集成到 `security/panda-hide/`（**不再依赖 KernelPatch**） |
+| **panda-hide.kpm**（可选） | 独立 KPM job | 仅当你仍要在 APatch/KernelPatch 上热加载时使用 |
 
-请勿把 panda-hide 的 `src` 强行当普通 `*.ko` 编进内核——它依赖 KernelPatch API
-（`fp_hook_syscalln` 等），只能以 KPM 形式加载。
+### panda-hide 树内移植（核心）
+
+上游 KPM 不能直接编进 `vmlinux`。本仓库按符号一一对应移植：
+
+| 上游 hook | 树内机制 |
+|-----------|----------|
+| `seq_put_decimal_ull` / `seq_puts` | kprobe pre |
+| `proc_pid_wchan` / `do_task_stat` | kretprobe |
+| `show_map_vma` / `__get_task_comm` | kretprobe |
+| `access_remote_vm` | kretprobe |
+| `openat` / `faccessat` | kprobe 早退 `-ENOENT` + LSM `file_open` |
+| `connect` | LSM `socket_connect` |
+
+详情：`docs/PANDA_HIDE_INTREE.md`、`panda-hide-in-tree/HOOK_MAP.md`
 
 ---
 
