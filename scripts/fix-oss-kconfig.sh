@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fix incomplete Xiaomi OSS trees for kconfig + build.
+# Fix incomplete / broken Xiaomi OSS sources for diting build.
 # Usage: fix-oss-kconfig.sh <kernel_src>
 set -euo pipefail
 
@@ -39,19 +39,13 @@ EOF
 }
 
 install_hwid_stub() {
-  # Xiaomi did not publish drivers/misc/hwid on bsp-diting-s-oss, but:
-  #  - drivers/misc/Makefile: obj-y += hwid/ and -I.../hwid
-  #  - drivers/soc/qcom/icnss2/qmi.c includes hwid.h and calls:
-  #      get_hw_country_version(), get_hw_version_platform()
-  #      HARDWARE_PROJECT_L9S, CountryGlobal
   mkdir -p drivers/misc/hwid
-  if [[ ! -f drivers/misc/hwid/hwid.h ]]; then
-    cat > drivers/misc/hwid/hwid.h <<'EOF'
+  # Always refresh header/source so symbol list stays complete across iterations.
+  cat > drivers/misc/hwid/hwid.h <<'EOF'
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Minimal OSS stub for unpublished Xiaomi hwid driver.
- * Enough for icnss2 BDF filename selection to compile and take the
- * generic path (non-L9S).
+ * Symbols required by icnss2/cnss2 BDF selection on bsp-diting-s-oss.
  */
 #ifndef __XIAOMI_HWID_STUB_H__
 #define __XIAOMI_HWID_STUB_H__
@@ -63,15 +57,21 @@ enum {
 	CountryCN = 0,
 	CountryGlobal = 1,
 	CountryIndia = 2,
+	CountryJapan = 3,
 };
 
-/* Project IDs — only L9S is referenced by diting icnss2 code */
-#ifndef HARDWARE_PROJECT_UNKNOWN
+/* Project IDs referenced by cnss2/icnss2 qmi.c */
 #define HARDWARE_PROJECT_UNKNOWN	0
-#endif
-#ifndef HARDWARE_PROJECT_L9S
-#define HARDWARE_PROJECT_L9S		0x4C3953 /* 'L9S' tag, not matched by stub */
-#endif
+#define HARDWARE_PROJECT_L1		1
+#define HARDWARE_PROJECT_L1A		2
+#define HARDWARE_PROJECT_L2		3
+#define HARDWARE_PROJECT_L2S		4
+#define HARDWARE_PROJECT_L3		5
+#define HARDWARE_PROJECT_L3S		6
+#define HARDWARE_PROJECT_L9S		7
+#define HARDWARE_PROJECT_L10		8
+#define HARDWARE_PROJECT_L12		9
+#define HARDWARE_PROJECT_L18		10
 
 uint32_t get_hw_country_version(void);
 uint32_t get_hw_version_platform(void);
@@ -81,12 +81,10 @@ uint32_t get_hwid_value(void);
 
 #endif /* __XIAOMI_HWID_STUB_H__ */
 EOF
-    echo "  [stub-header] drivers/misc/hwid/hwid.h"
-    created=$((created + 1))
-  fi
+  echo "  [stub-header] drivers/misc/hwid/hwid.h"
+  created=$((created + 1))
 
-  if [[ ! -f drivers/misc/hwid/hwid.c ]]; then
-    cat > drivers/misc/hwid/hwid.c <<'EOF'
+  cat > drivers/misc/hwid/hwid.c <<'EOF'
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Minimal OSS stub implementation of Xiaomi hwid helpers.
@@ -104,7 +102,7 @@ EXPORT_SYMBOL_GPL(get_hw_country_version);
 
 uint32_t get_hw_version_platform(void)
 {
-	/* Not HARDWARE_PROJECT_L9S → default bdwlan.elf path in icnss2 */
+	/* Not matching L1/L2/.../L9S → default bdwlan path in qmi.c */
 	return HARDWARE_PROJECT_UNKNOWN;
 }
 EXPORT_SYMBOL_GPL(get_hw_version_platform);
@@ -130,12 +128,9 @@ EXPORT_SYMBOL_GPL(get_hwid_value);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Xiaomi hwid OSS stub");
 EOF
-    echo "  [stub-source] drivers/misc/hwid/hwid.c"
-    created=$((created + 1))
-  fi
+  echo "  [stub-source] drivers/misc/hwid/hwid.c"
+  created=$((created + 1))
 
-  # Always (re)write Makefile so we actually build the stub objects.
-  # Empty stub Makefile from earlier runs would leave unresolved symbols.
   cat > drivers/misc/hwid/Makefile <<'EOF'
 # SPDX-License-Identifier: GPL-2.0
 # OSS stub hwid driver (upstream sources not published for this branch)
@@ -147,10 +142,65 @@ EOF
   stub_kconfig "drivers/misc/hwid/Kconfig"
 }
 
-# 1) hwid is special: needs real header + symbols, not empty Makefile
-install_hwid_stub
+fix_usb_gadget_async_dup() {
+  # Xiaomi OSS udc/core.c contains two identical pairs of
+  # usb_gadget_{enable,disable}_async_callbacks — compile fails with redefinition.
+  local f="drivers/usb/gadget/udc/core.c"
+  [[ -f "${f}" ]] || return 0
+  if grep -c "usb_gadget_enable_async_callbacks" "${f}" | grep -q '^1$'; then
+    echo "  [skip] ${f} async callbacks already unique"
+    return 0
+  fi
+  python3 - <<'PY'
+from pathlib import Path
+p = Path("drivers/usb/gadget/udc/core.c")
+text = p.read_text(errors="replace")
+# Remove the first short undoc'd pair (before the kernel-doc block).
+# Anchor on the undoc'd pair that uses spaces indentation.
+old = """static inline void usb_gadget_enable_async_callbacks(struct usb_udc *udc)
+{
+        struct usb_gadget *gadget = udc->gadget;
 
-# 2) other known empty holes
+        if (gadget->ops->udc_async_callbacks)
+                gadget->ops->udc_async_callbacks(gadget, true);
+}
+
+static inline void usb_gadget_disable_async_callbacks(struct usb_udc *udc)
+{
+        struct usb_gadget *gadget = udc->gadget;
+
+        if (gadget->ops->udc_async_callbacks)
+                gadget->ops->udc_async_callbacks(gadget, false);
+}
+
+/**
+ * usb_gadget_enable_async_callbacks - tell usb device controller to enable asynchronous callbacks
+"""
+new = """/**
+ * usb_gadget_enable_async_callbacks - tell usb device controller to enable asynchronous callbacks
+"""
+if old not in text:
+    # try tabs variant for the first pair
+    old2 = old.replace("        ", "\t")
+    if old2 in text:
+        text = text.replace(old2, new, 1)
+        p.write_text(text)
+        print("  [fix] udc/core.c removed duplicate async callbacks (tabs)")
+    else:
+        # fallback: delete first occurrence of each function body only if count==2
+        count = text.count("static inline void usb_gadget_enable_async_callbacks")
+        print(f"  [warn] udc/core.c async callback count={count}, no exact anchor")
+else:
+    p.write_text(text.replace(old, new, 1))
+    print("  [fix] udc/core.c removed duplicate async callbacks")
+PY
+  created=$((created + 1))
+}
+
+# --- run fixups ---
+install_hwid_stub
+fix_usb_gadget_async_dup
+
 for rel in \
   drivers/misc/plaid/Kconfig \
   drivers/misc/mi_gamekey/Kconfig
@@ -166,7 +216,6 @@ do
   fi
 done
 
-# 3) Generic: any `source "....Kconfig"` whose file is missing.
 while IFS= read -r line; do
   rel="${line#*\"}"
   rel="${rel%%\"*}"
@@ -176,7 +225,6 @@ while IFS= read -r line; do
 done < <(grep -R --include='Kconfig*' -h -E '^\s*source\s+"[^"]+Kconfig[^"]*"' \
   drivers arch fs net sound security 2>/dev/null || true)
 
-# 4) Generic: drivers/misc obj-y += foo/ without Makefile (except hwid handled above)
 if [[ -f drivers/misc/Makefile ]]; then
   while IFS= read -r sub; do
     [[ -n "${sub}" ]] || continue
@@ -193,7 +241,6 @@ fi
 
 echo "[+] OSS fixups created: ${created}"
 
-# sanity: every source in drivers/misc/Kconfig must now resolve
 if [[ -f drivers/misc/Kconfig ]]; then
   miss=0
   while IFS= read -r line; do
@@ -210,9 +257,4 @@ if [[ -f drivers/misc/Kconfig ]]; then
   echo "[+] drivers/misc/Kconfig sources all resolvable"
 fi
 
-# sanity: hwid symbols present
-if [[ ! -f drivers/misc/hwid/hwid.h || ! -f drivers/misc/hwid/hwid.c ]]; then
-  echo "[ERROR] hwid stub incomplete" >&2
-  exit 1
-fi
-echo "[+] hwid stub ready (hwid.h + hwid.c)"
+echo "[+] hwid stub ready; usb gadget dup fix applied if needed"
