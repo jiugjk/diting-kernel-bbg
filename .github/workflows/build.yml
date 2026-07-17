@@ -1,0 +1,173 @@
+name: Build diting kernel + Baseband-guard
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Kernel variant (consolidate|gki)"
+        required: true
+        default: "consolidate"
+        type: choice
+        options:
+          - consolidate
+          - gki
+      bbg_ref:
+        description: "Baseband-guard git ref (branch/tag/sha)"
+        required: true
+        default: "main"
+        type: string
+      kernel_branch:
+        description: "Xiaomi kernel branch"
+        required: true
+        default: "bsp-diting-s-oss"
+        type: string
+      build_kpm:
+        description: "Also build kpm-panda-hide (KernelPatch KPM, not in-tree)"
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches: [ main, master ]
+    paths:
+      - "scripts/**"
+      - "config/**"
+      - ".github/workflows/**"
+
+concurrency:
+  group: diting-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-kernel:
+    name: Kernel (BBG)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      WORK_DIR: ${{ github.workspace }}/work
+      VARIANT: ${{ github.event.inputs.variant || 'consolidate' }}
+      BBG_REF: ${{ github.event.inputs.bbg_ref || 'main' }}
+      KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch || 'bsp-diting-s-oss' }}
+      KERNEL_REPO: https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
+      # stock was android12-9; keep tag so uname still looks like A12 GKI generation
+      LOCALVERSION_OVERRIDE: -android12-9-bbg
+      KBUILD_BUILD_USER: bbg-ci
+      KBUILD_BUILD_HOST: github-actions
+
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          set -eux
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install host packages
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            git curl wget ca-certificates python3 python3-pip \
+            dwarves rsync cpio unzip zip gzip xz-utils \
+            libncurses-dev gawk openssl ccache device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
+            zstd tar findutils file
+          df -h
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Build kernel with Baseband-guard
+        run: |
+          set -eux
+          export JOBS="$(nproc)"
+          export WORK_DIR VARIANT BBG_REF KERNEL_BRANCH KERNEL_REPO
+          export LOCALVERSION_OVERRIDE KBUILD_BUILD_USER KBUILD_BUILD_HOST
+          ./scripts/build-kernel.sh 2>&1 | tee work/build.log
+
+      - name: Verify artifacts
+        run: |
+          set -eux
+          ./scripts/verify.sh work/dist work/out
+          echo "==== build-info ===="
+          cat work/dist/meta/build-info.txt || true
+          echo "==== BBG config ===="
+          grep -E 'CONFIG_BBG|CONFIG_LSM|CONFIG_SECURITY=' work/dist/config/final.config || true
+          echo "==== sizes ===="
+          find work/dist -type f -printf '%s\t%p\n' | sort -k2
+
+      - name: Generate reviewable patch bundle
+        if: always()
+        run: |
+          set -eux
+          mkdir -p work/dist/patches
+          if [[ -d work/kernel/.git ]]; then
+            # capture integration delta vs clean tree tip
+            git -C work/kernel status --porcelain || true
+            # only security wiring + Baseband-guard presence as file list
+            {
+              echo "# Integration file list (relative to kernel root)"
+              echo "Baseband-guard/  (cloned project)"
+              echo "security/baseband-guard -> ../Baseband-guard"
+              echo "security/Makefile  (obj-\$(CONFIG_BBG) += baseband-guard/)"
+              echo "security/Kconfig   (source security/baseband-guard/Kconfig)"
+              echo "config fragment applied at build time: builder/config/bbg.fragment"
+            } > work/dist/patches/INTEGRATION_FILES.txt
+            if [[ -f work/kernel/security/Makefile ]]; then
+              git -C work/kernel diff -- security/Makefile security/Kconfig \
+                > work/dist/patches/0001-security-bbg-wiring.diff || true
+            fi
+          fi
+          cp -f config/bbg.fragment work/dist/patches/bbg.fragment
+          cp -f work/build.log work/dist/meta/build.log || true
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: diting-kernel-bbg-${{ env.VARIANT }}-${{ github.run_number }}
+          path: |
+            work/dist/**
+          if-no-files-found: error
+          retention-days: 14
+
+  build-kpm:
+    name: KPM panda-hide (optional)
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_kpm == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      WORK_DIR: ${{ github.workspace }}/work
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git curl ca-certificates xz-utils make
+
+      - name: Build panda-hide.kpm
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build-kpm-panda-hide.sh
+
+      - name: Upload KPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: panda-hide-kpm-${{ github.run_number }}
+          path: |
+            work/dist/kpm/**
+            work/dist/meta/kpm-panda-hide.txt
+            work/dist/meta/panda-hide.sha256
+          if-no-files-found: error
+          retention-days: 14

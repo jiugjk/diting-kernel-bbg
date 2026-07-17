@@ -1,0 +1,11 @@
+# Baseband-guard fragment for diting (Android12-5.10)
+# Do NOT edit vendor defconfigs in-tree; apply via merge_config.sh.
+
+CONFIG_SECURITY=y
+CONFIG_BBG=y
+CONFIG_BBG_BLOCK_BOOT=y
+CONFIG_BBG_BLOCK_RECOVERY=y
+
+# Ensure LSM is enabled and baseband_guard is loaded.
+# Final CONFIG_LSM string is normalized by scripts/apply-bbg-config.sh
+# after defconfig merge (to preserve existing LSM order).
