@@ -1,0 +1,10 @@
+# GitHub Actions free runners (~7GB RAM) cannot finish FULL LTO+CFI of a
+# full MSM vendor kernel. Disable LTO/CFI for CI builds only.
+# Official gki_defconfig enables CONFIG_LTO_CLANG_FULL=y and CONFIG_CFI_CLANG=y.
+
+# CONFIG_LTO_CLANG_FULL is not set
+# CONFIG_LTO_CLANG_THIN is not set
+CONFIG_LTO_NONE=y
+# CONFIG_CFI_CLANG is not set
+# CONFIG_CFI_PERMISSIVE is not set
+# CONFIG_CFI_CLANG_SHADOW is not set

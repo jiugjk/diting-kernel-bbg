@@ -43,6 +43,10 @@ apply_fragment() {
 
 apply_fragment "${REPO_ROOT}/config/bbg.fragment"
 apply_fragment "${REPO_ROOT}/config/panda-hide.fragment"
+# Always apply on CI/default path: free runners OOM on FULL LTO
+if [[ "${DISABLE_LTO:-1}" == "1" ]]; then
+  apply_fragment "${REPO_ROOT}/config/ci-nolto.fragment"
+fi
 
 # Normalize CONFIG_LSM: keep existing list, append required LSMs.
 current_lsm="$(grep -E '^CONFIG_LSM=' "${CFG}" | head -n1 | cut -d= -f2- | tr -d '"' || true)"
@@ -74,7 +78,20 @@ if ! grep -q '^CONFIG_PANDA_HIDE_KPROBES=y$' "${CFG}"; then
   echo "# CONFIG_PANDA_HIDE_KPROBES is not set" >> "${CFG}"
 fi
 
+# Force LTO off for CI-sized machines (override gki_defconfig FULL LTO)
+if [[ "${DISABLE_LTO:-1}" == "1" ]]; then
+  for opt in CONFIG_LTO_CLANG_FULL CONFIG_LTO_CLANG_THIN CONFIG_CFI_CLANG CONFIG_CFI_PERMISSIVE CONFIG_CFI_CLANG_SHADOW; do
+    sed -i "/^${opt}=/d;/^# ${opt} is not set/d" "${CFG}"
+    echo "# ${opt} is not set" >> "${CFG}"
+  done
+  sed -i '/^CONFIG_LTO_NONE=/d;/^# CONFIG_LTO_NONE is not set/d' "${CFG}"
+  echo "CONFIG_LTO_NONE=y" >> "${CFG}"
+fi
+
 echo "[+] Security config applied"
 echo "    CONFIG_BBG=y BLOCK_BOOT=y BLOCK_RECOVERY=y"
 echo "    CONFIG_PANDA_HIDE=y STATIC=y (kprobes off by default)"
+if [[ "${DISABLE_LTO:-1}" == "1" ]]; then
+  echo "    LTO/CFI disabled for CI (DISABLE_LTO=1)"
+fi
 echo "    CONFIG_LSM=\"${current_lsm}\""
